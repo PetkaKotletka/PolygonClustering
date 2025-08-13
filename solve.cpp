@@ -2,22 +2,16 @@
 #include <iostream>
 #include <vector>
 
-constexpr double EPS = 1e-9;
-
 using namespace std;
 
 struct Point {
-    double x, y;
-};
-
-struct Line {
-    double a, b, c;
+    long long x, y;
 };
 
 struct Polygon {
     int num_points;
     int index; // To keep the original order
-    double left_x; // For sorting
+    long long left_x; // For sorting
     vector<Point> points;
 };
 
@@ -30,10 +24,6 @@ Point operator-(const Point& p1, const Point& p2) {
     return Point{p1.x - p2.x, p1.y - p2.y};
 }
 
-Point operator+(const Point& p1, const Point& p2) {
-    return Point{p1.x + p2.x, p1.y + p2.y};
-}
-
 istream& operator>>(istream& is, Point& p) {
     is >> p.x >> p.y;
     return is;
@@ -44,7 +34,7 @@ istream& operator>>(istream& is, Polygon& p) {
     p.index = -1;
     p.left_x = 0;
     p.points.resize(p.num_points);
-    for (size_t i = 0; i < p.num_points; ++i) {
+    for (int i = 0; i < p.num_points; ++i) {
         is >> p.points[i];
         if (i == 0 || p.points[i].x < p.left_x) {
             p.left_x = p.points[i].x;
@@ -53,75 +43,51 @@ istream& operator>>(istream& is, Polygon& p) {
     return is;
 }
 
-int sign(double x) { // -1, 0, 1
-    if (x < -EPS) {
-        return -1;
-    } else if (x > EPS) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
+bool intersects_ray_segment(const Point& r, Point& s1, Point& s2) {
+    // Assume that ray is horizontal and points to the right (positive X)
 
-double cross_product(const Point& p1, const Point& p2) {
-    return p1.x * p2.y - p1.y * p2.x;
-}
-
-double dot_product(const Point& p1, const Point& p2) {
-    return p1.x * p2.x + p1.y * p2.y;
-}
-
-Line get_line(const Point& p1, const Point& p2) {
-    Line l;
-    l.a = p1.y - p2.y;
-    l.b = p2.x - p1.x;
-    l.c = p1.x * p2.y - p2.x * p1.y;
-    return l;
-}
-
-Point intersect_lines(const Line& l1, const Line& l2) {
-    Point p;
-    p.x = (l1.b * l2.c - l1.c * l2.b) / (l1.a * l2.b - l1.b * l2.a);
-    p.y = (l1.c * l2.a - l1.a * l2.c) / (l1.a * l2.b - l1.b * l2.a);
-    return p;
-}
-
-bool intersects_ray_segment(const Point& r1, const Point& r2, const Point& s1, const Point& s2) {
-    Point r_vec = r2 - r1;
-    Point s1_vec = s1 - r1;
-    Point s2_vec = s2 - r1;
-    int cp1 = sign(cross_product(r_vec, s1_vec));
-    int cp2 = sign(cross_product(r_vec, s2_vec));
-    int dp1 = sign(dot_product(r_vec, s1_vec));
-    int dp2 = sign(dot_product(r_vec, s2_vec));
-
-    if (cp1 == cp2) {
-        if (cp1 != 0) {
-            return false;
-        }
-        // cp = 0
-        if (dp1 >= 0 || dp2 >= 0) {
-            return true;
-        }
+    if ((s1.y - r.y) * (s2.y - r.y) > 0) { // s1 and s2 are on the same side of the ray
         return false;
     }
 
-    // cp1 != cp2 => not parallel => there is an intersection point
-    Point p = intersect_lines(get_line(r1, r2), get_line(s1, s2));
-    if (sign(dot_product(r_vec, p - r1)) >= 0) {
-        return true;
+    if (s1.y == s2.y) { // Segment is horizontal and lies on the ray
+        return max(s1.x, s2.x) >= r.x;
     }
-    return false;
+
+    if (s1.x > s2.x) {
+        swap(s1, s2);
+    }
+
+    long long x;
+
+    if (s1.y > s2.y) {
+        x = s1.x + (s1.y - r.y) * (s2.x - s1.x) / (s1.y - s2.y);
+    } else {
+        x = s1.x + (r.y - s1.y) * (s2.x - s1.x) / (s2.y - s1.y);
+    }
+
+    return x >= r.x;
 }
 
 bool is_inside(const Polygon& polygon, const Point& p) {
-    // Ray casting algorithm
-    Point p2 = p + Point{123.45, 15.43}; // random ray
+    // Ray casting algorithm (with horizontal ray)
     int num_intersections = 0;
-    for (size_t i = 0; i < polygon.num_points; ++i) {
+    for (int i = 0; i < polygon.num_points; ++i) {
         Point s1 = polygon.points[i];
         Point s2 = polygon.points[(i + 1) % polygon.num_points];
-        if (intersects_ray_segment(p, p2, s1, s2)) {
+        if (s1.y == p.y) { // Handle the case when the ray passes through an s1 vertex
+            continue;
+        }
+        if (s2.y == p.y) { // Handle the case when the ray passes through an s2 vertex
+            if (s2.x < p.x) {
+                continue;
+            }
+
+            Point s3 = polygon.points[(i + 2) % polygon.num_points];
+            if ((s1.y < p.y && s2.y >= p.y) || (s1.y >= p.y && s2.y < p.y)) { // Only count as intersection if s1-s2-s3 passes across the ray
+                ++num_intersections;
+            }
+        } else if (intersects_ray_segment(p, s1, s2)) {
             ++num_intersections;
         }
     }

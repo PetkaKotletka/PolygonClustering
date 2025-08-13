@@ -36,6 +36,10 @@ class PolygonVisualizer:
         self.setup_editor_events()
         self.update_solve_button()
 
+    def snap_to_grid(self, x, y):
+        """Snap coordinates to nearest integer"""
+        return (round(x), round(y))
+
     def setup_ui(self):
         # Left panel for file list
         left_frame = ttk.Frame(self.root)
@@ -135,6 +139,25 @@ class PolygonVisualizer:
                     points.append((x, y))
                 self.polygons.append(points)
 
+    def draw_grid(self):
+        """Draw grid when zoom is large enough"""
+        if self.zoom_level > 0.01:
+            return
+
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        x_start = int(xlim[0]) - 1
+        x_end = int(xlim[1]) + 1
+        y_start = int(ylim[0]) - 1
+        y_end = int(ylim[1]) + 1
+
+        for x in range(x_start, x_end + 1):
+            self.ax.axvline(x, color='lightgray', alpha=0.3, linewidth=0.5)
+
+        for y in range(y_start, y_end + 1):
+            self.ax.axhline(y, color='lightgray', alpha=0.3, linewidth=0.5)
+
     def draw_polygons(self):
         self.ax.clear()
 
@@ -154,6 +177,9 @@ class PolygonVisualizer:
             self.ax.set_xlim(xlim)
             self.ax.set_ylim(ylim)
 
+            # Draw grid if zoomed in enough
+            self.draw_grid()
+
             # Draw created polygons
             for polygon in self.created_polygons:
                 points = polygon + [polygon[0]]
@@ -168,16 +194,18 @@ class PolygonVisualizer:
 
                 # Draw line to mouse
                 if len(self.current_polygon_points) >= 1:
-                    color = 'red' if self.would_intersect(self.current_polygon_points[-1], self.mouse_pos) else 'blue'
-                    self.ax.plot([self.current_polygon_points[-1][0], self.mouse_pos[0]],
-                               [self.current_polygon_points[-1][1], self.mouse_pos[1]],
+                    snapped_mouse = self.snap_to_grid(*self.mouse_pos)
+                    color = 'red' if self.would_intersect(self.current_polygon_points[-1], snapped_mouse) else 'blue'
+                    self.ax.plot([self.current_polygon_points[-1][0], snapped_mouse[0]],
+                               [self.current_polygon_points[-1][1], snapped_mouse[1]],
                                color=color, linewidth=2)
 
                 # Draw closing line (dashed)
                 if len(self.current_polygon_points) >= 2:
-                    color = 'red' if self.would_intersect(self.current_polygon_points[0], self.mouse_pos) else 'green'
-                    self.ax.plot([self.current_polygon_points[0][0], self.mouse_pos[0]],
-                               [self.current_polygon_points[0][1], self.mouse_pos[1]],
+                    snapped_mouse = self.snap_to_grid(*self.mouse_pos)
+                    color = 'red' if self.would_intersect(self.current_polygon_points[0], snapped_mouse) else 'green'
+                    self.ax.plot([self.current_polygon_points[0][0], snapped_mouse[0]],
+                               [self.current_polygon_points[0][1], snapped_mouse[1]],
                                color=color, linewidth=2, linestyle='--')
         else:
             # Auto-scale for viewing test cases
@@ -275,16 +303,17 @@ class PolygonVisualizer:
         if x is None or y is None:
             return
 
-        self.mouse_pos = (x, y)
+        snapped_pos = self.snap_to_grid(x, y)
+        self.mouse_pos = snapped_pos
 
         # Check if starting new polygon or continuing current one
         if not self.current_polygon_points:
             # Start new polygon
-            self.current_polygon_points = [(x, y)]
+            self.current_polygon_points = [snapped_pos]
         else:
             # Add point to current polygon
-            if not self.would_intersect(self.current_polygon_points[-1], (x, y)):
-                self.current_polygon_points.append((x, y))
+            if not self.would_intersect(self.current_polygon_points[-1], snapped_pos):
+                self.current_polygon_points.append(snapped_pos)
             else:
                 self.show_message("Line would intersect with existing segments!")
 
@@ -295,7 +324,7 @@ class PolygonVisualizer:
             return
 
         if event.xdata is not None and event.ydata is not None:
-            self.mouse_pos = (event.xdata, event.ydata)
+            self.mouse_pos = self.snap_to_grid(event.xdata, event.ydata)
             self.draw_polygons()
 
     def on_scroll(self, event):
@@ -318,6 +347,7 @@ class PolygonVisualizer:
         if event.keysym == 'Return':
             # Finish current polygon
             if len(self.current_polygon_points) >= 3:
+                snapped_mouse = self.snap_to_grid(*self.mouse_pos)
                 if not self.would_intersect(self.current_polygon_points[0], self.current_polygon_points[-1]):
                     self.created_polygons.append(self.current_polygon_points[:])
                     self.current_polygon_points = []
@@ -369,7 +399,7 @@ class PolygonVisualizer:
                 for polygon in self.created_polygons:
                     f.write(f"{len(polygon)}\n")
                     for x, y in polygon:
-                        f.write(f"{x:.6f} {y:.6f}\n")
+                        f.write(f"{x} {y}\n")
 
             # Refresh file list
             self.file_listbox.delete(0, tk.END)
