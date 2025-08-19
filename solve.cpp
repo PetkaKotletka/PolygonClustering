@@ -75,18 +75,18 @@ bool is_inside(const Polygon& polygon, const Point& p) {
     for (int i = 0; i < polygon.num_points; ++i) {
         Point s1 = polygon.points[i];
         Point s2 = polygon.points[(i + 1) % polygon.num_points];
-        if (s1.y == p.y) { // Handle the case when the ray passes through an s1 vertex
-            continue;
-        }
+
         if (s2.y == p.y) { // Handle the case when the ray passes through an s2 vertex
             if (s2.x < p.x) {
                 continue;
             }
 
             Point s3 = polygon.points[(i + 2) % polygon.num_points];
-            if ((s1.y < p.y && s2.y >= p.y) || (s1.y >= p.y && s2.y < p.y)) { // Only count as intersection if s1-s2-s3 passes across the ray
+            if ((s1.y < p.y && s3.y >= p.y) || (s1.y >= p.y && s3.y < p.y)) { // Only count as intersection if s1-s2-s3 passes across the ray
                 ++num_intersections;
             }
+        } else if (s1.y == p.y) { // Skip when the ray passes through an s1 vertex but not an s2 vertex
+            continue;
         } else if (intersects_ray_segment(p, s1, s2)) {
             ++num_intersections;
         }
