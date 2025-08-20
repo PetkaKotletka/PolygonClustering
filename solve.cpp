@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <climits>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 using namespace std;
@@ -9,15 +11,14 @@ struct Point {
 };
 
 struct Polygon {
-    int num_points;
     int index; // To keep the original order
     long long left_x; // For sorting
     vector<Point> points;
 };
 
-struct Cluster { // Polygon with other polygons inside
-    Polygon outer;
-    vector<Polygon> inner;
+struct Node {
+    vector<unique_ptr<Node>> children;
+    const Polygon* polygon;
 };
 
 Point operator-(const Point& p1, const Point& p2) {
@@ -30,13 +31,15 @@ istream& operator>>(istream& is, Point& p) {
 }
 
 istream& operator>>(istream& is, Polygon& p) {
-    is >> p.num_points;
+    size_t sz;
+    is >> sz;
     p.index = -1;
-    p.left_x = 0;
-    p.points.resize(p.num_points);
-    for (int i = 0; i < p.num_points; ++i) {
+    p.left_x = LLONG_MAX;
+    p.points.resize(sz);
+
+    for (int i = 0; i < sz; ++i) {
         is >> p.points[i];
-        if (i == 0 || p.points[i].x < p.left_x) {
+        if (p.points[i].x < p.left_x) {
             p.left_x = p.points[i].x;
         }
     }
@@ -72,16 +75,16 @@ bool intersects_ray_segment(const Point& r, Point& s1, Point& s2) {
 bool is_inside(const Polygon& polygon, const Point& p) {
     // Ray casting algorithm (with horizontal ray)
     int num_intersections = 0;
-    for (int i = 0; i < polygon.num_points; ++i) {
+    for (int i = 0; i < polygon.points.size(); ++i) {
         Point s1 = polygon.points[i];
-        Point s2 = polygon.points[(i + 1) % polygon.num_points];
+        Point s2 = polygon.points[(i + 1) % polygon.points.size()];
 
         if (s2.y == p.y) { // Handle the case when the ray passes through an s2 vertex
             if (s2.x < p.x) {
                 continue;
             }
 
-            Point s3 = polygon.points[(i + 2) % polygon.num_points];
+            Point s3 = polygon.points[(i + 2) % polygon.points.size()];
             if ((s1.y < p.y && s3.y >= p.y) || (s1.y >= p.y && s3.y < p.y)) { // Only count as intersection if s1-s2-s3 passes across the ray
                 ++num_intersections;
             }
@@ -94,48 +97,61 @@ bool is_inside(const Polygon& polygon, const Point& p) {
     return num_intersections % 2 == 1;
 }
 
-vector<Cluster> get_clusters(const vector<Polygon>& polygons) {
+unique_ptr<Node> build_tree(const vector<unique_ptr<Polygon>>& polygons) {
+    unique_ptr<Node> root = make_unique<Node>();
+    root->polygon = nullptr;
+
+    root->children.resize(polygons.size());
+    for (size_t i = 0; i < polygons.size(); ++i) {
+        root->children[i] = make_unique<Node>();
+        root->children[i]->polygon = polygons[i].get();
+    }
+
+    return root;
+}
+
+void create_clusters(Node* root) {
     // We assume that polygons are sorted by the X coordinate of their leftmost point
-    vector<Cluster> clusters;
+    vector<unique_ptr<Node>> clusters;
     bool found_cluster;
 
-    for (size_t pi = 0; pi < polygons.size(); ++pi) {
+    for (size_t child_idx = 0; child_idx < root->children.size(); ++child_idx) {
         found_cluster = false;
 
-        for (size_t ci = 0; ci < clusters.size(); ++ci) {
-            if (is_inside(clusters[ci].outer, polygons[pi].points[0])) {
-                clusters[ci].inner.push_back(polygons[pi]);
+        for (size_t cluster_idx = 0; cluster_idx < clusters.size(); ++cluster_idx) {
+            if (is_inside(*clusters[cluster_idx]->polygon, root->children[child_idx]->polygon->points[0])) {
+                clusters[cluster_idx]->children.push_back(move(root->children[child_idx]));
                 found_cluster = true;
                 break;
             }
         }
 
         if (!found_cluster) {
-            Cluster new_cluster;
-            new_cluster.outer = polygons[pi];
-            clusters.push_back(new_cluster);
+            clusters.push_back(move(root->children[child_idx]));
         }
     }
 
-    return clusters;
+    root->children = move(clusters);
 }
 
-void get_borders(vector<Polygon>& polygons, vector<vector<int>>& borders) {
+void get_borders(Node* root, vector<vector<int>>& borders) {
     // We assume that polygons are sorted by the X coordinate of their leftmost point
-    vector<Cluster> outer_clusters = get_clusters(polygons);
+    create_clusters(root);
 
-    for (size_t i = 0; i < outer_clusters.size(); ++i) {
-        vector<Cluster> inner_clusters = get_clusters(outer_clusters[i].inner);
+    for (size_t child_idx = 0; child_idx < root->children.size(); ++child_idx) {
+        create_clusters(root->children[child_idx].get());
 
-        vector<int> cluster_borders(inner_clusters.size() + 1);
-        cluster_borders[0] = outer_clusters[i].outer.index;
-        for (size_t j = 0; j < inner_clusters.size(); ++j) {
-            cluster_borders[j + 1] = inner_clusters[j].outer.index;
+        vector<int> cluster_borders(root->children[child_idx]->children.size() + 1);
+        cluster_borders[0] = root->children[child_idx]->polygon->index;
+
+        for (size_t grandchild_idx = 0; grandchild_idx < root->children[child_idx]->children.size(); ++grandchild_idx) {
+            cluster_borders[grandchild_idx + 1] = root->children[child_idx]->children[grandchild_idx]->polygon->index;
         }
-        borders.push_back(cluster_borders);
 
-        for (size_t j = 0; j < inner_clusters.size(); ++j) {
-            get_borders(inner_clusters[j].inner, borders);
+        borders.push_back(move(cluster_borders));
+
+        for (size_t grandchild_idx = 0; grandchild_idx < root->children[child_idx]->children.size(); ++grandchild_idx) {
+            get_borders(root->children[child_idx]->children[grandchild_idx].get(), borders);
         }
     }
 }
@@ -143,18 +159,22 @@ void get_borders(vector<Polygon>& polygons, vector<vector<int>>& borders) {
 int main() {
     int num_polygons;
     cin >> num_polygons;
-    vector<Polygon> polygons(num_polygons);
+    vector<unique_ptr<Polygon>> polygons(num_polygons);
+
     for (int i = 0; i < num_polygons; ++i) {
-        cin >> polygons[i];
-        polygons[i].index = i;
+        polygons[i] = make_unique<Polygon>();
+        cin >> *polygons[i];
+        polygons[i]->index = i;
     }
 
-    sort(polygons.begin(), polygons.end(), [](const Polygon& p1, const Polygon& p2) {
-        return p1.left_x < p2.left_x;
+    sort(polygons.begin(), polygons.end(), [](const unique_ptr<Polygon>& p1, const unique_ptr<Polygon>& p2) {
+        return p1->left_x < p2->left_x;
     });
 
+    unique_ptr<Node> root = build_tree(polygons);
+
     vector<vector<int>> borders;
-    get_borders(polygons, borders);
+    get_borders(root.get(), borders);
 
     cout << borders.size() << endl;
     for (size_t i = 0; i < borders.size(); ++i) {
