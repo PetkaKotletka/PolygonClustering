@@ -2,6 +2,7 @@
 #include <climits>
 #include <iostream>
 #include <memory>
+#include <list>
 #include <vector>
 
 using namespace std;
@@ -11,14 +12,13 @@ struct Point {
 };
 
 struct Polygon {
-    int index; // To keep the original order
     long long left_x; // For sorting
     vector<Point> points;
 };
 
 struct Node {
-    vector<unique_ptr<Node>> children;
-    const Polygon* polygon;
+    size_t pi; // Polygon index
+    list<size_t> children;
 };
 
 Point operator-(const Point& p1, const Point& p2) {
@@ -33,7 +33,6 @@ istream& operator>>(istream& is, Point& p) {
 istream& operator>>(istream& is, Polygon& p) {
     size_t sz;
     is >> sz;
-    p.index = -1;
     p.left_x = LLONG_MAX;
     p.points.resize(sz);
 
@@ -46,7 +45,7 @@ istream& operator>>(istream& is, Polygon& p) {
     return is;
 }
 
-bool intersects_ray_segment(const Point& r, Point& s1, Point& s2) {
+bool intersects_ray_segment(const Point& r, Point s1, Point s2) {
     // Assume that ray is horizontal and points to the right (positive X)
 
     if ((s1.y - r.y) * (s2.y - r.y) > 0) { // s1 and s2 are on the same side of the ray
@@ -90,68 +89,27 @@ bool is_inside(const Polygon& polygon, const Point& p) {
             }
         } else if (s1.y == p.y) { // Skip when the ray passes through an s1 vertex but not an s2 vertex
             continue;
-        } else if (intersects_ray_segment(p, s1, s2)) {
+        } else if (intersects_ray_segment(p, move(s1), move(s2))) {
             ++num_intersections;
         }
     }
     return num_intersections % 2 == 1;
 }
 
-unique_ptr<Node> build_tree(const vector<unique_ptr<Polygon>>& polygons) {
-    unique_ptr<Node> root = make_unique<Node>();
-    root->polygon = nullptr;
+void get_borders(size_t ni, const vector<Node>& tree, vector<bool>& used, vector<vector<size_t>>& borders) {
+    used[ni] = true;
 
-    root->children.resize(polygons.size());
-    for (size_t i = 0; i < polygons.size(); ++i) {
-        root->children[i] = make_unique<Node>();
-        root->children[i]->polygon = polygons[i].get();
+    borders.emplace_back();
+    borders.back().reserve(tree[ni].children.size() + 1);
+    borders.back().push_back(tree[ni].pi);
+
+    for (auto& ci : tree[ni].children) {
+        used[ci] = true;
+        borders.back().push_back(tree[ci].pi);
     }
-
-    return root;
-}
-
-void create_clusters(Node* root) {
-    // We assume that polygons are sorted by the X coordinate of their leftmost point
-    vector<unique_ptr<Node>> clusters;
-    bool found_cluster;
-
-    for (size_t child_idx = 0; child_idx < root->children.size(); ++child_idx) {
-        found_cluster = false;
-
-        for (size_t cluster_idx = 0; cluster_idx < clusters.size(); ++cluster_idx) {
-            if (is_inside(*clusters[cluster_idx]->polygon, root->children[child_idx]->polygon->points[0])) {
-                clusters[cluster_idx]->children.push_back(move(root->children[child_idx]));
-                found_cluster = true;
-                break;
-            }
-        }
-
-        if (!found_cluster) {
-            clusters.push_back(move(root->children[child_idx]));
-        }
-    }
-
-    root->children = move(clusters);
-}
-
-void get_borders(Node* root, vector<vector<int>>& borders) {
-    // We assume that polygons are sorted by the X coordinate of their leftmost point
-    create_clusters(root);
-
-    for (size_t child_idx = 0; child_idx < root->children.size(); ++child_idx) {
-        create_clusters(root->children[child_idx].get());
-
-        vector<int> cluster_borders(root->children[child_idx]->children.size() + 1);
-        cluster_borders[0] = root->children[child_idx]->polygon->index;
-
-        for (size_t grandchild_idx = 0; grandchild_idx < root->children[child_idx]->children.size(); ++grandchild_idx) {
-            cluster_borders[grandchild_idx + 1] = root->children[child_idx]->children[grandchild_idx]->polygon->index;
-        }
-
-        borders.push_back(move(cluster_borders));
-
-        for (size_t grandchild_idx = 0; grandchild_idx < root->children[child_idx]->children.size(); ++grandchild_idx) {
-            get_borders(root->children[child_idx]->children[grandchild_idx].get(), borders);
+    for (auto& ci : tree[ni].children) {
+        for (auto& gci : tree[ci].children) {
+            get_borders(gci, tree, used, borders);
         }
     }
 }
@@ -159,27 +117,39 @@ void get_borders(Node* root, vector<vector<int>>& borders) {
 int main() {
     int num_polygons;
     cin >> num_polygons;
-    vector<unique_ptr<Polygon>> polygons(num_polygons);
+    vector<Polygon> polygons(num_polygons);
+    vector<Node> tree(num_polygons);
+    vector<bool> used(num_polygons, false);
+    vector<vector<size_t>> borders;
 
     for (int i = 0; i < num_polygons; ++i) {
-        polygons[i] = make_unique<Polygon>();
-        cin >> *polygons[i];
-        polygons[i]->index = i;
+        cin >> polygons[i];
+        tree[i].pi = i;
     }
 
-    sort(polygons.begin(), polygons.end(), [](const unique_ptr<Polygon>& p1, const unique_ptr<Polygon>& p2) {
-        return p1->left_x < p2->left_x;
+    sort(tree.begin(), tree.end(), [&polygons](const Node& n1, const Node& n2) {
+        return polygons[n1.pi].left_x < polygons[n2.pi].left_x;
     });
 
-    unique_ptr<Node> root = build_tree(polygons);
+    for (int i = 0; i < tree.size(); ++i) {
+        for (int j = i - 1; j >= 0; --j) {
+            if (is_inside(polygons[tree[j].pi], polygons[tree[i].pi].points[0])) {
+                tree[j].children.push_back(i);
+                break;
+            }
+        }
+    }
 
-    vector<vector<int>> borders;
-    get_borders(root.get(), borders);
+    for (size_t ni = 0; ni < tree.size(); ++ni) {
+        if (!used[ni]) {
+            get_borders(ni, tree, used, borders);
+        }
+    }
 
     cout << borders.size() << endl;
-    for (size_t i = 0; i < borders.size(); ++i) {
-        for (size_t j = 0; j < borders[i].size(); ++j) {
-            cout << borders[i][j] << " ";
+    for (auto& border : borders) {
+        for (auto& pi : border) {
+            cout << pi << " ";
         }
         cout << endl;
     }
